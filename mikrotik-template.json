@@ -1,0 +1,29 @@
+{
+  "index_patterns": ["mikrotik-*"],
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
+  "mappings": {
+    "properties": {
+      "chain": { "type": "keyword" },
+      "action": { "type": "keyword" },
+      "in_interface": { "type": "keyword" },
+      "out_interface": { "type": "keyword" },
+      "protocol": { "type": "keyword" },
+      "src_ip": { "type": "ip" },
+      "dst_ip": { "type": "ip" },
+      "src_port": { "type": "integer" },
+      "dst_port": { "type": "integer" },
+      "length": { "type": "integer" },
+      "@timestamp": { "type": "date" },
+      "geoip": {
+        "properties": {
+          "country_name": { "type": "keyword" },
+          "city_name": { "type": "keyword" },
+          "location": { "type": "geo_point" }
+        }
+      }
+    }
+  }
+} 
