@@ -1,0 +1,102 @@
+# =================================================================================
+# ARQUIVO DE CONFIGURAÇÃO DEFINITIVO PARA LOGS MIKROTIK (v17)
+# =================================================================================
+
+# ENTRADA: Recebe os logs do MikroTik
+input {
+  udp {
+    port => 514
+    codec => "line"
+    type => "mikrotik_firewall"
+  }
+}
+
+# FILTRO: Processa, parseia e enriquece os logs
+filter {
+  # Cria uma cópia da mensagem original para fins de depuração.
+  mutate {
+    add_field => { "debug_message" => "%{message}" }
+  }
+
+  # Bloco Grok para tratar variações de log de diferentes tipos de tráfego
+  grok {
+    match => {
+      "message" => [
+        "firewall,info %{WORD:entry_type}:? in:%{NOTSPACE:in_interface} out:%{NOTSPACE:out_interface},? connection-mark:%{NOTSPACE:connection_mark} connection-state:%{NOTSPACE:connection_state}(?:,? src-mac %{MAC:src_mac})?,? proto %{WORD:protocol},? %{IP:src_ip}:%{INT:src_port}->%{IP:dst_ip}:%{INT:dst_port},? (?:NAT %{GREEDYDATA:nat_info})?,? len %{INT:length}",
+        "firewall,info %{WORD:entry_type}:? in:%{NOTSPACE:in_interface} out:%{NOTSPACE:out_interface},? connection-mark:%{NOTSPACE:connection_mark} connection-state:%{NOTSPACE:connection_state}(?:,? src-mac %{MAC:src_mac})?,? proto %{WORD:protocol},? %{IP:src_ip}:%{INT:src_port}->%{IP:dst_ip}:%{INT:dst_port},? len %{INT:length}"
+      ]
+    }
+    tag_on_failure => ["_grokparsefailure"]
+  }
+
+  # Se o out_interface for (unknown 0) ou (none), substituímos por N/A
+  if ![out_interface] or [out_interface] == "(unknown 0)" or [out_interface] == "(none)" {
+    mutate {
+      replace => { "out_interface" => "N/A" }
+    }
+  }
+
+  # Garantir que os campos de números sejam convertidos corretamente.
+  mutate {
+    convert => {
+      "src_port" => "integer"
+      "dst_port" => "integer"
+      "length" => "integer"
+    }
+  }
+
+  # Adiciona contexto temporal para distinguir entre horário comercial e fora de hora.
+  ruby {
+    code => '
+      begin
+        timestamp = event.get("@timestamp")
+        timestamp.time.localtime("-03:00")
+        hour = timestamp.time.hour
+        wday = timestamp.time.wday
+        if wday >= 1 && wday <= 5 && hour >= 8 && hour < 18
+          event.set("[time_context][period]", "horario_comercial")
+        else
+          event.set("[time_context][period]", "fora_de_hora")
+        end
+        days = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"]
+        event.set("[time_context][day_of_week]", days[wday])
+        if timestamp.time.month == 6
+          event.set("[time_context][event]", "Festas Juninas")
+        end
+      rescue => e
+        event.set("[ruby_error_time_context]", e.message)
+      end
+    '
+    add_tag => ["time_context_added"]
+  }
+
+  # Cria um sumário legível do evento se os campos principais existirem.
+  if [src_ip] and [dst_ip] {
+    mutate {
+      add_field => {
+        "event_summary" => "Conexão de %{src_ip}:%{src_port} para %{dst_ip}:%{dst_port} via %{protocol}."
+      }
+    }
+  }
+
+  # Registra a falha de parsing com os detalhes do log
+  if "_grokparsefailure" in [tags] {
+    mutate {
+      add_field => { "grok_error_message" => "Falha ao parsear a linha: %{message}" }
+    }
+  }
+}
+
+# SAÍDA: Envia os logs processados para o Elasticsearch
+output {
+  stdout { 
+    codec => rubydebug 
+  }
+
+  elasticsearch {
+    hosts => ["http://elasticsearch:9200"]
+    index => "mikrotik-firewall-%{+YYYY.MM.dd}"
+    action => "create"
+    data_stream => "false"
+  }
+}

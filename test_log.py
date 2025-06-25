@@ -2,7 +2,7 @@ import socket
 import time
 
 # Configurações
-UDP_IP = "192.168.1.43"  # IP do seu servidor
+UDP_IP = "localhost"  # IP do seu servidor
 UDP_PORT = 514
 
 # Mensagem de teste no formato do Mikrotik

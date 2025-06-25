@@ -2,11 +2,14 @@
   "index_patterns": ["mikrotik-firewall-*"],
   "settings": {
     "number_of_shards": 1,
-    "number_of_replicas": 0
+    "number_of_replicas": 0,
+    "index.lifecycle.name": "mikrotik_policy",
+    "index.lifecycle.rollover_alias": "mikrotik-firewall"
   },
   "mappings": {
     "properties": {
       "@timestamp": { "type": "date" },
+      "@timestamp_local": { "type": "date" },
       "entry_type": { "type": "keyword" },
       "in_interface": { "type": "keyword" },
       "out_interface": { "type": "keyword" },
@@ -22,11 +25,19 @@
       "nat_dst_ip": { "type": "ip" },
       "nat_dst_port": { "type": "integer" },
       "length": { "type": "integer" },
-      "time_context": {
+      "traffic_type": { "type": "keyword" },
+      "src_geoip": { 
         "properties": {
-          "period": { "type": "keyword" },
-          "day_of_week": { "type": "keyword" },
-          "event": { "type": "keyword" }
+          "country_name": { "type": "keyword" },
+          "city_name": { "type": "keyword" },
+          "location": { "type": "geo_point" }
+        }
+      },
+      "dst_geoip": {
+        "properties": {
+          "country_name": { "type": "keyword" },
+          "city_name": { "type": "keyword" },
+          "location": { "type": "geo_point" }
         }
       }
     }

@@ -1,0 +1,102 @@
+# =================================================================================
+# ARQUIVO DE CONFIGURAÇÃO DEFINITIVO PARA LOGS MIKROTIK (v10)
+# =================================================================================
+
+# ENTRADA: Recebe os logs do MikroTik
+input {
+  udp {
+    port => 514
+    codec => "line"
+    type => "mikrotik_firewall"
+  }
+}
+
+# FILTRO: Processa, parseia e enriquece os logs
+filter {
+  # Cria uma cópia da mensagem original para fins de depuração.
+  mutate {
+    add_field => { "debug_message" => "%{message}" }
+  }
+
+  # Bloco Grok com um único padrão inteligente para tratar as variações de log.
+  grok {
+    match => {
+      "message" => "firewall,info (?:%{WORD:chain}:|\[%{GREEDYDATA:rule_details}\]) in:%{NOTSPACE:in_interface} out:%{GREEDYDATA:out_interface_raw}, (?:packet-mark:%{NOTSPACE:packet_mark} )?connection-mark:%{NOTSPACE:connection_mark} connection-state:%{DATA:connection_state} src-mac %{MAC:src_mac}, proto %{DATA:protocol}, %{IP:src_ip}:%{INT:src_port}->%{IP:dst_ip}:%{INT:dst_port},(?: NAT %{GREEDYDATA:nat_info})?, len %{INT:length}"
+    }
+    tag_on_failure => ["_grok_parse_failed"]
+  }
+
+  # Processa o campo da interface de saída se ele foi capturado.
+  if [out_interface_raw] {
+    mutate {
+      rename => { "out_interface_raw" => "out_interface" }
+    }
+  }
+
+  # Padroniza o valor da interface de saída quando for desconhecida.
+  if [out_interface] == "(unknown 0)" or [out_interface] == "(none)" {
+    mutate {
+      replace => { "out_interface" => "N/A" }
+    }
+  }
+
+  # Converte campos de texto para números inteiros.
+  mutate {
+    convert => {
+      "src_port" => "integer"
+      "dst_port" => "integer"
+      "length"   => "integer"
+    }
+  }
+
+  # Adiciona contexto temporal ao log (período, dia da semana, etc.).
+  ruby {
+    code => '
+      begin
+        timestamp = event.get("@timestamp")
+        timestamp.time.localtime("-03:00")
+        hour = timestamp.time.hour
+        wday = timestamp.time.wday
+
+        if wday >= 1 && wday <= 5 && hour >= 8 && hour < 18
+          event.set("[time_context][period]", "horario_comercial")
+        else
+          event.set("[time_context][period]", "fora_de_hora")
+        end
+        
+        days = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"]
+        event.set("[time_context][day_of_week]", days[wday])
+        
+        if timestamp.time.month == 6
+          event.set("[time_context][event]", "Festas Juninas")
+        end
+      rescue => e
+        event.set("[ruby_error_time_context]", e.message)
+      end
+    '
+    add_tag => ["time_context_added"]
+  }
+
+  # Cria um sumário legível do evento se os campos principais existirem.
+  if [src_ip] and [dst_ip] {
+    mutate {
+      add_field => {
+        "event_summary" => "Conexão de %{src_ip}:%{src_port} para %{dst_ip}:%{dst_port} via %{protocol}."
+      }
+    }
+  }
+}
+
+# SAÍDA: Envia os logs processados para o Elasticsearch
+output {
+  # Deixamos a saída para o terminal ativa para o teste final.
+  stdout { 
+    codec => rubydebug 
+  }
+
+  elasticsearch {
+    hosts => ["http://elasticsearch:9200"]
+    index => "mikrotik-firewall-%{+YYYY.MM.dd}"
+    action => "create"
+  }
+}
